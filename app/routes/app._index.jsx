@@ -359,12 +359,14 @@ export default function CustomerTable() {
           <thead>
             <tr border="1">
               {[
+                "Id",
                 "Participating Party Name",
                 "Participating Party Address",
                 "First name",
                 "Last name",
                 "Email Address",
                 "Phone Number",
+                "Street Address",
                 "City",
                 "Province",
                 "Postal Code",
