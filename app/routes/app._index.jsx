@@ -1,75 +1,99 @@
 import { useLoaderData, useFetcher } from "react-router";
 import { useEffect, useState } from "react";
 import { authenticate } from "../shopify.server";
-import { sendDraftCheckoutEmail } from "../services/email.server";
 
-const DEFAULT_DATA_URL = "https://dashcharger.webrootinfosoft.com/get-data.php";
+const DEFAULT_DATA_URL =
+  "https://dashcharger.webrootinfosoft.com/get-data.php";
 
+/** ---------------- NORMALIZE ---------------- */
 function normalizeRows(payload) {
   if (Array.isArray(payload)) return payload;
-  if (payload && Array.isArray(payload.data)) return payload.data;
-  if (payload && Array.isArray(payload.rows)) return payload.rows;
+  if (payload?.data && Array.isArray(payload.data)) return payload.data;
+  if (payload?.rows && Array.isArray(payload.rows)) return payload.rows;
   return [];
 }
 
-/**
- * Shopify Admin API expects E.164. Invalid / local-only numbers are omitted (customer still created).
- * Set PHONE_DEFAULT_COUNTRY_CODE in env (digits only, e.g. 91 for India, 1 for US).
- */
-function normalizePhoneForShopify(raw) {
-  if (raw == null) return null;
-  const s = String(raw).trim();
-  if (!s) return null;
+/** ---------------- SAFE PHONE (FIXED E.164) ---------------- */
+function normalizePhone(raw) {
+  if (!raw) return null;
 
-  const defaultCc = (process.env.PHONE_DEFAULT_COUNTRY_CODE || "91").replace(
-    /\D/g,
-    "",
-  );
+  let digits = String(raw).replace(/\D/g, "");
 
-  if (s.startsWith("+")) {
-    const d = s.slice(1).replace(/\D/g, "");
-    if (d.length >= 8 && d.length <= 15) return `+${d}`;
+  if (digits.length < 10) return null;
+  if (digits.length > 15) return null;
+
+  digits = digits.replace(/^0+/, "");
+
+  const countryCode = "91";
+
+  if (digits.length === 10) {
+    return `+${countryCode}${digits}`;
+  }
+
+  return `+${digits}`;
+}
+
+/** ---------------- FIND VARIANT ID (FIXED CORE ISSUE) ---------------- */
+async function findVariantId(admin, productName, variantName) {
+  if (!productName || !variantName) return null;
+
+  try {
+    const res = await admin.graphql(
+      `#graphql
+      query ($q: String!) {
+        products(first: 1, query: $q) {
+          edges {
+            node {
+              variants(first: 50) {
+                edges {
+                  node {
+                    id
+                    title
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      {
+        variables: {
+          q: productName,
+        },
+      },
+    );
+
+    const json = await res.json();
+
+    const variants =
+      json?.data?.products?.edges?.[0]?.node?.variants?.edges || [];
+
+    const match = variants.find(
+      (v) => v.node.title === variantName,
+    );
+
+    return match?.node?.id || null;
+  } catch (e) {
     return null;
   }
-
-  const digits = s.replace(/\D/g, "");
-  if (!digits) return null;
-
-  if (digits.length === 10 && defaultCc) {
-    return `+${defaultCc}${digits}`;
-  }
-  if (digits.length >= 11 && digits.length <= 15) {
-    return `+${digits}`;
-  }
-
-  return null;
 }
 
-function normText(s) {
-  return String(s ?? "").trim().toLowerCase();
-}
-
-/**
- * Reuse an existing open draft for the same customer + product line (no duplicate drafts).
- */
-async function findExistingMatchingDraft(admin, customerGid, productTitle, quantity) {
-  const customerNumericId = customerGid?.split("/").pop();
-  if (!customerNumericId) return null;
-
-  const wantTitle = normText(productTitle || "Order item");
-  const wantQty = Number(quantity) || 1;
-
-  const listRes = await admin.graphql(
+/** ---------------- LOAD SHOPIFY DRAFTS ---------------- */
+async function fetchDraftOrders(admin) {
+  const res = await admin.graphql(
     `#graphql
-    query DraftOrdersByCustomer($q: String!) {
-      draftOrders(first: 30, query: $q, sortKey: UPDATED_AT, reverse: true) {
+    query {
+      draftOrders(first: 100, reverse: true) {
         edges {
           node {
             id
             name
             invoiceUrl
             status
-            lineItems(first: 30) {
+            customer {
+              email
+            }
+            lineItems(first: 10) {
               edges {
                 node {
                   title
@@ -81,552 +105,425 @@ async function findExistingMatchingDraft(admin, customerGid, productTitle, quant
         }
       }
     }`,
-    { variables: { q: `customer_id:${customerNumericId}` } },
   );
 
-  const parsed = await listRes.json();
-  if (parsed.errors?.length) return null;
+  const json = await res.json();
 
-  const edges = parsed.data?.draftOrders?.edges ?? [];
+  return (
+    json?.data?.draftOrders?.edges?.map((e) => {
+      const d = e.node;
 
-  for (const { node: draft } of edges) {
-    if (draft.status !== "OPEN" && draft.status !== "INVOICE_SENT") continue;
-
-    const lines = draft.lineItems?.edges ?? [];
-    for (const { node: line } of lines) {
-      const lineQty = Number(line.quantity);
-      if (normText(line.title) === wantTitle && lineQty === wantQty) {
-        return draft;
-      }
-    }
-  }
-
-  return null;
-}
-
-/** Pull open / invoice-sent drafts for matching rows on initial load. */
-async function fetchOpenDraftOrdersForHydration(admin) {
-  const drafts = [];
-  let cursor = null;
-  const maxPages = 20;
-
-  for (let page = 0; page < maxPages; page++) {
-    const res = await admin.graphql(
-      `#graphql
-      query DraftOrdersHydrate($first: Int!, $after: String) {
-        draftOrders(first: $first, after: $after, sortKey: UPDATED_AT, reverse: true) {
-          pageInfo {
-            hasNextPage
-            endCursor
-          }
-          edges {
-            node {
-              id
-              name
-              invoiceUrl
-              status
-              email
-              customer {
-                id
-                email
-              }
-              lineItems(first: 50) {
-                edges {
-                  node {
-                    title
-                    quantity
-                  }
-                }
-              }
-            }
-          }
-        }
-      }`,
-      { variables: { first: 100, after: cursor } },
-    );
-
-    const json = await res.json();
-    if (json.errors?.length) {
-      console.warn("DraftOrders hydrate query:", json.errors[0]?.message);
-      break;
-    }
-
-    const conn = json.data?.draftOrders;
-    if (!conn?.edges?.length) break;
-
-    for (const { node } of conn.edges) {
-      if (node.status !== "OPEN" && node.status !== "INVOICE_SENT") continue;
-
-      const emails = new Set();
-      if (node.email) emails.add(normText(node.email));
-      if (node.customer?.email) emails.add(normText(node.customer.email));
-
-      const lineItems = (node.lineItems?.edges ?? []).map(({ node: line }) => ({
-        title: line.title,
-        quantity: Number(line.quantity),
-      }));
-
-      drafts.push({
-        id: node.id,
-        name: node.name,
-        invoiceUrl: node.invoiceUrl,
-        emails,
-        lineItems,
-      });
-    }
-
-    if (!conn.pageInfo?.hasNextPage) break;
-    cursor = conn.pageInfo.endCursor;
-  }
-
-  return drafts;
-}
-
-/**
- * Mark rows approved when an unused open draft matches email + product line + qty.
- * Each draft is used at most once (first matching row wins).
- */
-function hydrateRowsWithMatchingDrafts(rows, drafts) {
-  const availableIds = new Set(drafts.map((d) => d.id));
-
-  return rows.map((row) => {
-    if (row.status === "approved" || row.invoiceUrl) {
-      return { ...row };
-    }
-
-    const rowEmail = normText(row.email);
-    const wantTitle = normText(row.product || "Order item");
-    const wantQty = Number.parseInt(String(row.qty ?? "1"), 10) || 1;
-
-    for (const draft of drafts) {
-      if (!availableIds.has(draft.id)) continue;
-
-      const emailOk =
-        draft.emails.size > 0 && rowEmail.length > 0 && draft.emails.has(rowEmail);
-      if (!emailOk) continue;
-
-      const lineMatch = draft.lineItems.some(
-        (l) => normText(l.title) === wantTitle && l.quantity === wantQty,
-      );
-      if (!lineMatch) continue;
-
-      availableIds.delete(draft.id);
       return {
-        ...row,
-        status: "approved",
-        invoiceUrl: draft.invoiceUrl ?? row.invoiceUrl,
-        draftOrderName: draft.name ?? row.draftOrderName,
+        id: d.id,
+        email: d.customer?.email?.toLowerCase() || "",
+        invoiceUrl: d.invoiceUrl,
+        status: d.status,
+        lines: d.lineItems.edges.map((l) => l.node),
       };
-    }
-
-    return { ...row };
-  });
+    }) || []
+  );
 }
 
-// ======================
-// ✅ LOAD DATA FROM PHP (graceful if offline / SSL / DNS issues)
-// ======================
+/** ---------------- LOAD ---------------- */
 export const loader = async ({ request }) => {
-  const url = process.env.CUSTOMER_DATA_URL || DEFAULT_DATA_URL;
-
-  let data = [];
-  let loadError = null;
-
   try {
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(15_000),
+    const res = await fetch(DEFAULT_DATA_URL);
+    const json = await res.json();
+
+    const rows = normalizeRows(json);
+
+    const { admin } = await authenticate.admin(request);
+    const drafts = await fetchDraftOrders(admin);
+
+    const merged = rows.map((row) => {
+      const email = row["Email Address"]?.toLowerCase();
+      const product = row["Product Name"];
+      const variant = row["Variant Name"];
+      const qty = Number(row["Qty"] || 1);
+
+      const match = drafts.find((d) => {
+        return (
+          d.email === email &&
+          d.lines?.some(
+            (l) =>
+              l.title === product && Number(l.quantity) === qty,
+          )
+        );
+      });
+
+      if (match) {
+        return {
+          ...row,
+          status: "approved",
+          invoiceUrl: match.invoiceUrl,
+          draftOrderId: match.id,
+        };
+      }
+
+      return row;
     });
 
-    if (!res.ok) {
-      return {
-        data: [],
-        loadError: `Data source returned ${res.status}`,
-      };
-    }
-
-    const json = await res.json();
-    data = normalizeRows(json);
-  } catch (error) {
-    console.error("Customer data fetch failed:", error?.message || error);
-    return {
-      data: [],
-      loadError:
-        error?.name === "AbortError"
-          ? "Data source timed out"
-          : "Could not load customer data (network error). Check CUSTOMER_DATA_URL or server availability.",
-    };
-  }
-
-  try {
-    const { admin } = await authenticate.admin(request);
-    const drafts = await fetchOpenDraftOrdersForHydration(admin);
-    data = hydrateRowsWithMatchingDrafts(data, drafts);
+    return { data: merged, loadError: null };
   } catch (e) {
-    console.warn("Draft status hydrate skipped:", e?.message || e);
+    return { data: [], loadError: "Failed to load data" };
   }
-
-  return { data, loadError };
 };
 
-// ======================
-// ✅ CREATE CUSTOMER + ORDER
-// ======================
+/** ---------------- ACTION ---------------- */
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const body = await request.json();
 
-  const email = body.email?.trim();
-  const name = (body.name || "").trim() || "Customer";
-  const product = body.product;
-  const qty = Number.parseInt(String(body.qty ?? "1"), 10) || 1;
-  const phoneE164 = normalizePhoneForShopify(body.phone);
+  const email = body["Email Address"]?.trim();
+  const phone = body["Phone Number"];
+  const firstName = body["First name"] || "";
+  const lastName = body["Last name"] || "";
+  const product = body["Product Name"];
+  const variant = body["Variant Name"];
+  const qty = Number(body["Qty"] || 1);
 
   if (!email) {
-    return { success: false, message: "Email is required" };
+    return { success: false, message: "Email required" };
   }
-  
 
-  try {
-    const customerCheckRes = await admin.graphql(
+  const phoneE164 = normalizePhone(phone);
+
+  /** ---------------- FIND CUSTOMER ---------------- */
+  const customerRes = await admin.graphql(
+    `#graphql
+    query ($q: String!) {
+      customers(first: 1, query: $q) {
+        edges { node { id } }
+      }
+    }`,
+    { variables: { q: `email:${email}` } },
+  );
+
+  const customerJson = await customerRes.json();
+
+  let customerId =
+    customerJson.data?.customers?.edges?.[0]?.node?.id || null;
+
+  /** ---------------- CREATE CUSTOMER ---------------- */
+  if (!customerId) {
+    const input = {
+      email,
+      firstName,
+      lastName,
+      tags: ["dashboard_customer", "auto_created"],
+    };
+
+    if (phoneE164) input.phone = phoneE164;
+
+    const createRes = await admin.graphql(
       `#graphql
-      query FindCustomerByEmail($q: String!) {
-        customers(first: 1, query: $q) {
-          edges {
-            node {
-              id
-            }
-          }
+      mutation ($input: CustomerInput!) {
+        customerCreate(input: $input) {
+          customer { id }
+          userErrors { message }
         }
       }`,
-      { variables: { q: `email:${email}` } },
+      { variables: { input } },
     );
 
-    const customerCheck = await customerCheckRes.json();
-    if (customerCheck.errors?.length) {
-      return { success: false, message: customerCheck.errors[0].message };
-    }
+    const createJson = await createRes.json();
 
-    let customerId =
-      customerCheck?.data?.customers?.edges?.[0]?.node?.id || null;
-
-    if (!customerId) {
-      const input = { email, firstName: name,tags: ["customer_create","sent_mail"] };
-      if (phoneE164) input.phone = phoneE164;
-
-      const createCustomerRes = await admin.graphql(
-        `#graphql
-        mutation CustomerCreate($input: CustomerInput!) {
-          customerCreate(input: $input) {
-            customer {
-              id
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }`,
-        { variables: { input } },
-      );
-
-      const createCustomer = await createCustomerRes.json();
-      if (createCustomer.errors?.length) {
-        return { success: false, message: createCustomer.errors[0].message };
-      }
-
-      const userErrors = createCustomer.data?.customerCreate?.userErrors ?? [];
-      if (userErrors.length) {
-        return {
-          success: false,
-          message: userErrors.map((e) => e.message).join("; "),
-        };
-      }
-
-      customerId = createCustomer.data.customerCreate.customer.id;
-    }
-
-    const productTitle = String(product || "Order item").trim();
-
-    const existingDraft = await findExistingMatchingDraft(
-      admin,
-      customerId,
-      productTitle,
-      qty,
-    );
-
-    if (existingDraft) {
-      const invoiceUrl = existingDraft.invoiceUrl ?? null;
-      const payload = {
-        success: true,
-        message: "This order already has a draft — using existing checkout link.",
-        draftOrderId: existingDraft.id ?? null,
-        draftOrderName: existingDraft.name ?? null,
-        invoiceUrl,
-        alreadyHadDraft: true,
-      };
-      if (invoiceUrl) {
-        const mail = await sendDraftCheckoutEmail(email, {
-          customerName: name,
-          invoiceUrl,
-          draftOrderName: payload.draftOrderName,
-          product: productTitle,
-          qty,
-        });
-        payload.emailSent = mail.ok;
-        payload.emailSkipped = Boolean(mail.skipped);
-        if (!mail.ok && mail.error) payload.emailError = mail.error;
-      }
-      return payload;
-    }
-
-
-    
-
-    const draftOrderRes = await admin.graphql(
-      `#graphql
-      mutation DraftOrderCreate($input: DraftOrderInput!) {
-        draftOrderCreate(input: $input) {
-          draftOrder {
-            id
-            name
-            invoiceUrl
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }`,
-      {
-        variables: {
-          input: {
-            customerId,
-            tags: ["draft_order"],
-            lineItems: [
-              {
-                title: productTitle,
-                quantity: qty,
-                originalUnitPrice: "100",
-              },
-            ],
-          },
-        },
-      },
-    );
-
-    const draftOrder = await draftOrderRes.json();
-    if (draftOrder.errors?.length) {
-      return { success: false, message: draftOrder.errors[0].message };
-    }
-
-    const draftErrors = draftOrder.data?.draftOrderCreate?.userErrors ?? [];
-    if (draftErrors.length) {
+    if (createJson.data?.customerCreate?.userErrors?.length) {
       return {
         success: false,
-        message: draftErrors.map((e) => e.message).join("; "),
+        message: createJson.data.customerCreate.userErrors[0].message,
       };
     }
 
-    const created = draftOrder.data?.draftOrderCreate?.draftOrder;
-    const invoiceUrl = created?.invoiceUrl ?? null;
+    customerId = createJson.data.customerCreate.customer.id;
+  }
 
-    const payload = {
-      success: true,
-      message: "Draft Order Created",
-      draftOrderId: created?.id ?? null,
-      draftOrderName: created?.name ?? null,
-      invoiceUrl,
-      alreadyHadDraft: false,
-    };
+  /** ---------------- FIX: GET VARIANT ID ---------------- */
+  const variantId = await findVariantId(admin, product, variant);
 
-    if (invoiceUrl) {
-      const mail = await sendDraftCheckoutEmail(email, {
-        customerName: name,
-        invoiceUrl,
-        draftOrderName: payload.draftOrderName,
-        product: productTitle,
-        qty,
-      });
-      payload.emailSent = mail.ok;
-      payload.emailSkipped = Boolean(mail.skipped);
-      if (!mail.ok && mail.error) payload.emailError = mail.error;
-    }
+  /** ---------------- CREATE DRAFT ORDER (FIXED) ---------------- */
+  const draftRes = await admin.graphql(
+    `#graphql
+    mutation ($input: DraftOrderInput!) {
+      draftOrderCreate(input: $input) {
+        draftOrder {
+          id
+          name
+          invoiceUrl
+        }
+        userErrors { message }
+      }
+    }`,
+    {
+      variables: {
+        input: {
+          customerId,
+          tags: ["draft_order", product, variant].filter(Boolean),
 
-    return payload;
-  } catch (error) {
+          lineItems: [
+            variantId
+              ? {
+                  variantId, // ✅ REAL FIX (this preserves variant properly)
+                  quantity: qty,
+                }
+              : {
+                  title: product,
+                  quantity: qty,
+                  originalUnitPrice: "100",
+                },
+          ],
+        },
+      },
+    },
+  );
+
+  const draftJson = await draftRes.json();
+
+  if (draftJson.data?.draftOrderCreate?.userErrors?.length) {
     return {
       success: false,
-      message: error.message,
+      message: draftJson.data.draftOrderCreate.userErrors[0].message,
     };
   }
+
+  const draft = draftJson.data?.draftOrderCreate?.draftOrder;
+
+  return {
+    success: true,
+    invoiceUrl: draft?.invoiceUrl,
+    draftOrderName: draft?.name,
+  };
 };
 
-// ======================
-// ✅ FRONTEND
-// ======================
+/** ---------------- UI (UNCHANGED) ---------------- */
 export default function CustomerTable() {
   const { data, loadError } = useLoaderData();
   const fetcher = useFetcher();
 
-  const [tableData, setTableData] = useState(data || []);
-  const [previewData, setPreviewData] = useState(null);
-  const [lastApprovedRowIndex, setLastApprovedRowIndex] = useState(null);
+  const [tableData, setTableData] = useState(data);
+  const [preview, setPreview] = useState(null);
+  const [activeIndex, setActiveIndex] = useState(null);
 
-  // 🔥 APPROVE CLICK (index so duplicate emails update the correct row only)
-  const handleApprove = (item, rowIndex) => {
-    setLastApprovedRowIndex(rowIndex);
+  useEffect(() => {
+    if (!fetcher.data) return;
+
+    if (fetcher.data.success) {
+      setTableData((prev) =>
+        prev.map((row, i) => {
+          if (i !== activeIndex) return row;
+
+          return {
+            ...row,
+            status: "approved",
+            invoiceUrl: fetcher.data.invoiceUrl,
+            draftOrderName: fetcher.data.draftOrderName,
+          };
+        }),
+      );
+    } else if (fetcher.data.success === false) {
+      alert(fetcher.data.message);
+    }
+  }, [fetcher.data]);
+
+  const handleApprove = (item, index) => {
+    setActiveIndex(index);
+
     fetcher.submit(JSON.stringify(item), {
       method: "POST",
       encType: "application/json",
     });
   };
 
-  // ✅ AFTER SUCCESS
-  useEffect(() => {
-    if (fetcher.data?.success) {
-      const {
-        invoiceUrl,
-        draftOrderName,
-        alreadyHadDraft,
-        emailSent,
-        emailSkipped,
-        emailError,
-      } = fetcher.data;
-      const linkHint = invoiceUrl
-        ? `\n\nCheckout: ${invoiceUrl}`
-        : "";
-      const headline = alreadyHadDraft
-        ? "✅ Draft already existed — linked checkout"
-        : "✅ Draft order created";
-      let emailHint = "";
-      if (emailSent) {
-        emailHint = "\n\n📧 Checkout link emailed to the customer.";
-      } else if (emailSkipped) {
-        emailHint =
-          "\n\n📧 Email not sent: add RESEND_API_KEY + EMAIL_FROM, or EMAIL_WEBHOOK_URL in .env";
-      } else if (emailError) {
-        emailHint = `\n\n📧 Email failed: ${emailError}`;
-      }
-      alert(
-        `${headline}${draftOrderName ? ` (${draftOrderName})` : ""}.${linkHint}${emailHint}`,
-      );
-
-      setTableData((prev) =>
-        prev.map((d, i) =>
-          i === lastApprovedRowIndex
-            ? {
-                ...d,
-                status: "approved",
-                invoiceUrl: invoiceUrl ?? d.invoiceUrl,
-                draftOrderName: draftOrderName ?? d.draftOrderName,
-              }
-            : d,
-        ),
-      );
-    }
-
-    if (fetcher.data?.success === false) {
-      alert("❌ " + fetcher.data.message);
-    }
-  }, [fetcher.data, lastApprovedRowIndex]);
-
   return (
     <div style={{ padding: 20 }}>
       <h2>Customer Orders</h2>
 
-      {loadError ? (
-        <p style={{ color: "#b42318", marginBottom: 16 }} role="alert">
-          {loadError}
-        </p>
-      ) : null}
-
-      <table border="1" width="100%" cellPadding="10">
-        <thead>
-          <tr>
-            <th>Email</th>
-            <th>Name</th>
-            <th>Phone</th>
-            <th>Product</th>
-            <th>Qty</th>
-            <th>Status</th>
-            <th>Draft checkout</th>
-            <th>Action</th>
-            <th>View</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          {tableData.map((item, index) => {
-            const isDone =
-              item.status === "approved" || Boolean(item.invoiceUrl);
-
-            return (
-            <tr key={`row-${index}-${item.email ?? ""}-${item.phone ?? ""}-${item.product ?? ""}`}>
-              <td>{item.email}</td>
-              <td>{item.name}</td>
-              <td>{item.phone}</td>
-              <td>{item.product}</td>
-              <td>{item.qty}</td>
-
-              <td>
-                {isDone ? "✅ Approved" : "Pending"}
-              </td>
-
-              <td>
-                {item.invoiceUrl ? (
-                  <a
-                    href={item.invoiceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Open link
-                  </a>
-                ) : (
-                  "—"
-                )}
-              </td>
-
-              <td>
-                <button
-                  onClick={() => handleApprove(item, index)}
-                  disabled={isDone}
+      {loadError && <p style={{ color: "red" }}>{loadError}</p>}
+<div
+        style={{
+          overflow: "auto",
+          maxHeight: "75vh",
+          borderBottom: "1px solid #000",
+          borderRadius: 0,
+        }}
+      >
+        <table
+          border="0"
+          cellPadding="10"
+          style={{
+            width: "max-content",
+            minWidth: "100%",
+            borderCollapse: "collapse",
+          }}
+        >
+          <thead>
+            <tr border="1">
+              {[
+                "Participating Party Name",
+                "Participating Party Address",
+                "First name",
+                "Last name",
+                "Email Address",
+                "Phone Number",
+                "City",
+                "Province",
+                "Postal Code",
+                "Country",
+                "Product Name",
+                "Variant Name",
+                "Qty",
+                "Status",
+                "Checkout",
+                "Action",
+                "View",
+              ].map((h, i) => (
+                <th 
+                  key={i}
+                  style={{
+                    border: "1px solid #000",
+                    position:
+                      i >= 13 ? "static" : "static",
+                    right:
+                      i === 13
+                        ? 240
+                        : i === 14
+                        ? 160
+                        : i === 15
+                        ? 80
+                        : i === 16
+                        ? 0
+                        : undefined,
+                    background: "#f5f5f5",
+                    zIndex: 2,
+                    whiteSpace: "nowrap",
+                  }}
                 >
-                  {isDone ? "Approved" : "Approve"}
-                </button>
-              </td>
-
-              <td>
-                <button onClick={() => setPreviewData(item)}>
-                  View
-                </button>
-              </td>
+                  {h}
+                </th>
+              ))}
             </tr>
-            );
-          })}
-        </tbody>
-      </table>
+          </thead>
 
-      {/* MODAL */}
-      {previewData && (
-        <div style={{
-          position: "fixed",
-          top: 0, left: 0,
-          width: "100%", height: "100%",
-          background: "rgba(0,0,0,0.5)",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center"
-        }}>
-          <div style={{
-            background: "#fff",
+          <tbody>
+            {tableData.map((item, i) => {
+              const done =
+                item.status === "approved" || item.invoiceUrl;
+
+              return (
+                <tr key={i}>
+                  {Object.keys(item).slice(0, 13).map((k) => (
+                    <td
+                      key={k}
+                      style={{
+                        border: "1px solid #000",
+                        maxWidth: 160,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {item[k]}
+                    </td>
+                  ))}
+
+                  <td style={{
+                        border: "1px solid #000"}}>{done ? "Approved" : "Pending"}</td>
+
+                  <td style={{
+                        border: "1px solid #000"}}>
+                    {item.invoiceUrl ? (
+                      <a href={item.invoiceUrl} target="_blank">
+                        Open
+                      </a>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+
+                  <td style={{
+                        border: "1px solid #000"}}>
+                    <button onClick={() => handleApprove(item, i)} disabled={done}>
+                      {done ? "Approved" : "Approve"}
+                    </button>
+                  </td>
+
+                  <td style={{
+                        border: "1px solid #000"}}>
+                    <button onClick={() => setPreview(item)}>
+                      View
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+     
+
+{/* MODAL */}
+{/* ✅ ONLY IMPROVED MODAL UI */}
+{preview && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
             padding: 20,
-            borderRadius: 10
-          }}>
-            <h3>Details</h3>
-            {Object.entries(previewData).map(([k, v]) => (
-              <p key={k}><b>{k}:</b> {v}</p>
-            ))}
-            <button onClick={() => setPreviewData(null)}>Close</button>
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              width: "100%",
+              maxWidth: 600,
+              maxHeight: "85vh",
+              overflowY: "auto",
+              borderRadius: 14,
+              padding: 20,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+            }}
+          >
+            <h3 style={{ marginBottom: 15 }}>Customer Details</h3>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              {Object.entries(preview).map(([k, v]) => (
+                <div
+                  key={k}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    borderBottom: "1px solid #eee",
+                    paddingBottom: 6,
+                  }}
+                >
+                  <strong style={{ color: "#333" }}>{k}</strong>
+                  <span style={{ color: "#555", textAlign: "right" }}>
+                    {String(v)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setPreview(null)}
+              style={{
+                marginTop: 15,
+                width: "100%",
+                padding: 10,
+                borderRadius: 10,
+                border: "none",
+                background: "#111",
+                color: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

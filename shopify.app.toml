@@ -2,7 +2,7 @@
 
 client_id = "ea3e8e9ef3c085d8d2fb9670425aadf6"
 name = "order-automation"
-application_url = "https://example.com"
+application_url = "https://app.dashsharing.ca/app"
 embedded = true
 
 [build]
@@ -12,23 +12,28 @@ automatically_update_urls_on_dev = true
 api_version = "2026-04"
 
   [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled" ]
-  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/scopes_update" ]
+  uri = "https://example.com/webhooks/app/scopes_update"
 
   [[webhooks.subscriptions]]
-  topics = [ "app/scopes_update" ]
-  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/uninstalled" ]
+  uri = "https://example.com/webhooks/app/uninstalled"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-# Customers + draft orders (app._index approve flow)
-scopes = "write_metaobject_definitions,write_metaobjects,write_products,read_customers,write_customers,read_draft_orders,write_draft_orders,read_discounts,write_discounts"
+scopes = "read_customers,write_customers,read_discounts,write_discounts,write_draft_orders,read_draft_orders,write_metaobject_definitions,write_metaobjects,write_products"
+optional_scopes = [ ]
+use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [
+  "https://app.dashsharing.ca/api/auth/callback",
+  "https://app.dashsharing.ca/auth/callback",
+  "https://app.dashsharing.ca/auth/shopify/callback"
+]
 
 [app_proxy]
-url = "https://example.com/app/upload"
+url = "https://app.dashsharing.ca/app/upload"
 subpath = "order-upload"
 prefix = "apps"
 
