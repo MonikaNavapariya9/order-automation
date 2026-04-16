@@ -384,15 +384,15 @@ export default function CustomerTable() {
                   style={{
                     border: "1px solid #000",
                     position:
-                      i >= 13 ? "static" : "static",
+                      i >= 15 ? "static" : "static",
                     right:
-                      i === 13
+                      i === 15
                         ? 240
-                        : i === 14
-                        ? 160
-                        : i === 15
-                        ? 80
                         : i === 16
+                        ? 160
+                        : i === 17
+                        ? 80
+                        : i === 18
                         ? 0
                         : undefined,
                     background: "#f5f5f5",
