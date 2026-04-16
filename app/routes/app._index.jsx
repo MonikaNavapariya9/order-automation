@@ -413,7 +413,7 @@ export default function CustomerTable() {
 
               return (
                 <tr key={i}>
-                  {Object.keys(item).slice(0, 13).map((k) => (
+                  {Object.keys(item).slice(0, 15).map((k) => (
                     <td
                       key={k}
                       style={{
