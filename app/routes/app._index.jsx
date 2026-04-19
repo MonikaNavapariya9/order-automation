@@ -19,12 +19,11 @@ function normalizePhone(raw) {
 
   let digits = String(raw).replace(/\D/g, "");
 
-  if (digits.length < 10) return null;
-  if (digits.length > 15) return null;
+  if (digits.length < 10 || digits.length > 15) return null;
 
   digits = digits.replace(/^0+/, "");
 
-  const countryCode = "91";
+  const countryCode = "1"; // ✅ Canada
 
   if (digits.length === 10) {
     return `+${countryCode}${digits}`;
@@ -287,8 +286,20 @@ const draftRes = await admin.graphql(
       input: {
         customerId,
         tags: ["draft_order"],
-
-        lineItems: [lineItem], // ✅ dynamic
+    
+        lineItems: [lineItem], // ✅ keep as-is
+    
+        /** ✅ ADD THIS BLOCK */
+        shippingAddress: {
+          firstName: firstName,
+          lastName: lastName,
+          address1: body["Street Address"] || "",
+          city: body["City"] || "",
+          province: body["Province"] || "",
+          zip: body["Postal Code"] || "",
+          country: body["Country"] || "",
+          phone: phoneE164 || "",
+        },
       },
     },
   }
