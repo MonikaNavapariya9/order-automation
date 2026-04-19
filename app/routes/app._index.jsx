@@ -238,15 +238,30 @@ export const action = async ({ request }) => {
     customerId = createJson.data.customerCreate.customer.id;
   }
 
-  
-/** ---------------- GET VARIANT ID ---------------- */
+  /** ---------------- GET VARIANT ID ---------------- */
 const variantId = await findVariantId(admin, product, variant);
 
-/** ❌ STOP if variant not found (IMPORTANT) */
-if (!variantId) {
-  return {
-    success: false,
-    message: `Variant not found → ${variant}`,
+/** ---------------- PREPARE LINE ITEM ---------------- */
+let lineItem;
+
+if (variantId) {
+  // ✅ Use real variant
+  lineItem = {
+    variantId: variantId,
+    quantity: qty,
+  };
+} else {
+  // ✅ Fallback (NO VARIANT)
+  lineItem = {
+    title: product ? product.slice(0, 40) : "Custom Product",
+    quantity: qty,
+    originalUnitPrice: "100",
+    customAttributes: [
+      {
+        key: "Variant",
+        value: variant || "N/A",
+      },
+    ],
   };
 }
 
@@ -272,17 +287,11 @@ const draftRes = await admin.graphql(
         customerId,
         tags: ["draft_order"],
 
-        lineItems: [
-          {
-            variantId: variantId, // ✅ REAL VARIANT ATTACHED
-            quantity: qty,
-          },
-        ],
+        lineItems: [lineItem], // ✅ dynamic
       },
     },
   }
 );
-
 
 
   const draftJson = await draftRes.json();
@@ -428,7 +437,7 @@ export default function CustomerTable() {
              whiteSpace: "nowrap",
            }}
          >
-           item[k]
+           {item[k]}
          </td>
           ))}
 
