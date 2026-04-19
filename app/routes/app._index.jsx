@@ -238,7 +238,7 @@ export const action = async ({ request }) => {
     customerId = createJson.data.customerCreate.customer.id;
   }
 
-  /** ---------------- FIX: GET VARIANT ID ---------------- */
+  /** ---------------- FIX: GET VARIANT ID ---------------- */  
   const variantId = await findVariantId(admin, product, variant);
 
   /** ---------------- CREATE DRAFT ORDER (FIXED) ---------------- */
@@ -335,7 +335,7 @@ export default function CustomerTable() {
   };
 
   return (
-    <div style={{ padding: 20 }}>
+    <div style={{ padding: 20, fontFamily: "Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif", }}>
       <h2>Customer Orders</h2>
 
       {loadError && <p style={{ color: "red" }}>{loadError}</p>}
@@ -345,121 +345,163 @@ export default function CustomerTable() {
           maxHeight: "75vh",
           borderBottom: "1px solid #000",
           borderRadius: 0,
+          fontFamily: "Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif",
         }}
       >
         <table
-          border="0"
-          cellPadding="10"
+  style={{
+    width: "100%",
+    borderCollapse: "separate",
+    borderSpacing: 0,
+    fontSize: 14,
+  }}
+>
+  <thead>
+    <tr style={{ textAlign: "left" }}>
+      {[
+        "Id",
+        "Participating Party Name",
+        "Participating Party Address",
+        "First name",
+        "Last name",
+        "Email Address",
+        "Phone Number",
+        "Street Address",
+        "City",
+        "Province",
+        "Postal Code",
+        "Country",
+        "Product Name",
+        "Variant Name",
+        "Qty",
+        "Status",
+        "Checkout",
+        "Action",
+        "View",
+      ].map((h, i) => (
+        <th
+          key={i}
           style={{
-            width: "max-content",
-            minWidth: "100%",
-            borderCollapse: "collapse",
+            padding: "12px 14px",
+            background: "#f6f6f7",
+            color: "#202223",
+            fontWeight: 600,
+            borderBottom: "1px solid #e1e3e5",
+            whiteSpace: "nowrap",
           }}
         >
-          <thead>
-            <tr border="1">
-              {[
-                "Id",
-                "Participating Party Name",
-                "Participating Party Address",
-                "First name",
-                "Last name",
-                "Email Address",
-                "Phone Number",
-                "Street Address",
-                "City",
-                "Province",
-                "Postal Code",
-                "Country",
-                "Product Name",
-                "Variant Name",
-                "Qty",
-                "Status",
-                "Checkout",
-                "Action",
-                "View",
-              ].map((h, i) => (
-                <th 
-                  key={i}
-                  style={{
-                    border: "1px solid #000",
-                    position:
-                      i >= 15 ? "static" : "static",
-                    right:
-                      i === 15
-                        ? 240
-                        : i === 16
-                        ? 160
-                        : i === 17
-                        ? 80
-                        : i === 18
-                        ? 0
-                        : undefined,
-                    background: "#f5f5f5",
-                    zIndex: 2,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
+          {h}
+        </th>
+      ))}
+    </tr>
+  </thead>
 
-          <tbody>
-            {tableData.map((item, i) => {
-              const done =
-                item.status === "approved" || item.invoiceUrl;
+  <tbody>
+    {tableData.map((item, i) => {
+      const done = item.status === "approved" || item.invoiceUrl;
 
-              return (
-                <tr key={i}>
-                  {Object.keys(item).slice(0, 15).map((k) => (
-                    <td
-                      key={k}
-                      style={{
-                        border: "1px solid #000",
-                        maxWidth: 160,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {item[k]}
-                    </td>
-                  ))}
+      return (
+        <tr
+          key={i}
+          style={{
+            background: "#fff",
+          }}
+        >
+          {Object.keys(item).slice(0, 15).map((k) => (
+           <td
+           key={k}
+           style={{
+             padding: "12px 14px",
+             borderBottom: "1px solid #f1f1f1",
+             color: "#202223",
+             maxWidth: 180,
+             overflow: "hidden",
+             textOverflow: "ellipsis",
+             whiteSpace: "nowrap",
+           }}
+         >
+           {k === "Variant Name"
+             ? (item[k]?.length > 40
+                 ? item[k].slice(0, 40) + "..."
+                 : item[k])
+             : item[k]}
+         </td>
+          ))}
 
-                  <td style={{
-                        border: "1px solid #000"}}>{done ? "Approved" : "Pending"}</td>
+          {/* STATUS */}
+          <td style={{ padding: "12px 14px", borderBottom: "1px solid #f1f1f1" }}>
+            <span
+              style={{
+                display: "inline-block",
+                padding: "4px 10px",
+                borderRadius: 20,
+                fontSize: 12,
+                fontWeight: 600,
+                background: done ? "#fde68a" : "#e5e7eb",
+                color: "#202223",
+              }}
+            >
+              {done ? "Open" : "Pending"}
+            </span>
+          </td>
 
-                  <td style={{
-                        border: "1px solid #000"}}>
-                    {item.invoiceUrl ? (
-                      <a href={item.invoiceUrl} target="_blank">
-                        Open
-                      </a>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
+          {/* CHECKOUT */}
+          <td style={{ padding: "12px 14px", borderBottom: "1px solid #f1f1f1" }}>
+            {item.invoiceUrl ? (
+              <a
+                href={item.invoiceUrl}
+                target="_blank"
+                style={{
+                  color: "#2c6ecb",
+                  textDecoration: "none",
+                  fontWeight: 500,
+                }}
+              >
+                Open
+              </a>
+            ) : (
+              "-"
+            )}
+          </td>
 
-                  <td style={{
-                        border: "1px solid #000"}}>
-                    <button onClick={() => handleApprove(item, i)} disabled={done}>
-                      {done ? "Approved" : "Approve"}
-                    </button>
-                  </td>
+          {/* ACTION */}
+          <td style={{ padding: "12px 14px", borderBottom: "1px solid #f1f1f1" }}>
+            <button
+              onClick={() => handleApprove(item, i)}
+              disabled={done}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "1px solid #c9cccf",
+                background: done ? "#f6f6f7" : "#202223",
+                color: done ? "#8c9196" : "#fff",
+                cursor: done ? "not-allowed" : "pointer",
+              }}
+            >
+              {done ? "Approved" : "Approve"}
+            </button>
+          </td>
 
-                  <td style={{
-                        border: "1px solid #000"}}>
-                    <button onClick={() => setPreview(item)}>
-                      View
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+          {/* VIEW */}
+          <td style={{ padding: "12px 14px", borderBottom: "1px solid #f1f1f1" }}>
+            <button
+              onClick={() => setPreview(item)}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "1px solid #c9cccf",
+                background: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              View
+            </button>
+          </td>
+        </tr>
+      );
+    })}
+  </tbody>
+</table>
       </div>
 
      
