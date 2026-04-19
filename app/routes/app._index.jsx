@@ -428,11 +428,7 @@ export default function CustomerTable() {
              whiteSpace: "nowrap",
            }}
          >
-           {k === "Variant Name"
-             ? (item[k]?.length > 40
-                 ? item[k].slice(0, 40) + "..."
-                 : item[k])
-             : item[k]}
+           item[k]
          </td>
           ))}
 
