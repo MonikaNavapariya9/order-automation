@@ -238,44 +238,52 @@ export const action = async ({ request }) => {
     customerId = createJson.data.customerCreate.customer.id;
   }
 
-  /** ---------------- FIX: GET VARIANT ID ---------------- */  
-  const variantId = await findVariantId(admin, product, variant);
+  
+/** ---------------- GET VARIANT ID ---------------- */
+const variantId = await findVariantId(admin, product, variant);
 
-  /** ---------------- CREATE DRAFT ORDER (FIXED) ---------------- */
-  const draftRes = await admin.graphql(
-    `#graphql
-    mutation ($input: DraftOrderInput!) {
-      draftOrderCreate(input: $input) {
-        draftOrder {
-          id
-          name
-          invoiceUrl
-        }
-        userErrors { message }
+/** ❌ STOP if variant not found (IMPORTANT) */
+if (!variantId) {
+  return {
+    success: false,
+    message: `Variant not found → ${variant}`,
+  };
+}
+
+/** ---------------- CREATE DRAFT ORDER ---------------- */
+const draftRes = await admin.graphql(
+  `#graphql
+  mutation ($input: DraftOrderInput!) {
+    draftOrderCreate(input: $input) {
+      draftOrder {
+        id
+        name
+        invoiceUrl
       }
-    }`,
-    {
-      variables: {
-        input: {
-          customerId,
-          tags: ["draft_order", product, variant].filter(Boolean),
+      userErrors {
+        field
+        message
+      }
+    }
+  }`,
+  {
+    variables: {
+      input: {
+        customerId,
+        tags: ["draft_order"],
 
-          lineItems: [
-            variantId
-              ? {
-                  variantId, // ✅ REAL FIX (this preserves variant properly)
-                  quantity: qty,
-                }
-              : {
-                  title: product,
-                  quantity: qty,
-                  originalUnitPrice: "100",
-                },
-          ],
-        },
+        lineItems: [
+          {
+            variantId: variantId, // ✅ REAL VARIANT ATTACHED
+            quantity: qty,
+          },
+        ],
       },
     },
-  );
+  }
+);
+
+
 
   const draftJson = await draftRes.json();
 
