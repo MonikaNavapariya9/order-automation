@@ -33,8 +33,8 @@ function normalizePhone(raw) {
 }
 
 /** ---------------- FIND VARIANT ID (FIXED CORE ISSUE) ---------------- */
-async function findVariantId(admin, productName, variantName) {
-  if (!productName || !variantName) return null;
+async function findVariant(admin, productName, variantName) {
+  if (!productName) return null;
 
   try {
     const res = await admin.graphql(
@@ -48,6 +48,7 @@ async function findVariantId(admin, productName, variantName) {
                   node {
                     id
                     title
+                    price
                   }
                 }
               }
@@ -55,11 +56,7 @@ async function findVariantId(admin, productName, variantName) {
           }
         }
       }`,
-      {
-        variables: {
-          q: productName,
-        },
-      },
+      { variables: { q: productName } }
     );
 
     const json = await res.json();
@@ -67,11 +64,18 @@ async function findVariantId(admin, productName, variantName) {
     const variants =
       json?.data?.products?.edges?.[0]?.node?.variants?.edges || [];
 
+    if (!variants.length) return null;
+
+    // ✅ Try exact match
     const match = variants.find(
-      (v) => v.node.title === variantName,
+      (v) => v.node.title === variantName
     );
 
-    return match?.node?.id || null;
+    if (match) return match.node;
+
+    // ✅ fallback to FIRST variant
+    return variants[0].node;
+
   } catch (e) {
     return null;
   }
