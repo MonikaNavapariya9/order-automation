@@ -32,7 +32,6 @@ function normalizePhone(raw) {
   return `+${digits}`;
 }
 
-/** ---------------- FIND VARIANT ID (FIXED CORE ISSUE) ---------------- */
 async function findVariant(admin, productName, variantName) {
   if (!productName) return null;
 
@@ -48,7 +47,6 @@ async function findVariant(admin, productName, variantName) {
                   node {
                     id
                     title
-                    price
                   }
                 }
               }
@@ -56,7 +54,11 @@ async function findVariant(admin, productName, variantName) {
           }
         }
       }`,
-      { variables: { q: productName } }
+      {
+        variables: {
+          q: `title:"${productName}"`,
+        },
+      }
     );
 
     const json = await res.json();
@@ -66,17 +68,16 @@ async function findVariant(admin, productName, variantName) {
 
     if (!variants.length) return null;
 
-    // ✅ Try exact match
     const match = variants.find(
       (v) => v.node.title === variantName
     );
 
     if (match) return match.node;
 
-    // ✅ fallback to FIRST variant
-    return variants[0].node;
+    return variants[0].node; // ✅ fallback first variant
 
   } catch (e) {
+    console.log("Variant error:", e);
     return null;
   }
 }
@@ -242,47 +243,24 @@ export const action = async ({ request }) => {
   }
 
   
-  /** ---------------- GET VARIANT ID ---------------- */
-const variantId = await findVariantId(admin, product, variant);
+ /** ---------------- GET VARIANT ---------------- */
+const variantData = await findVariant(admin, product, variant);
 
 /** ---------------- PREPARE LINE ITEM ---------------- */
-// let lineItem;
-
-// if (variantId) {
-//   // ✅ Use real variant
-//   lineItem = {
-//     variantId: variantId,
-//     quantity: qty,
-//   };
-// } else {
-//   // ✅ Fallback (NO VARIANT)
-//   lineItem = {
-//     title: product ? product.slice(0, 40) : "Custom Product",
-//     quantity: qty,
-//     originalUnitPrice: "100",
-//     customAttributes: [
-//       {
-//         key: "Variant",
-//         value: variant || "N/A",
-//       },
-//     ],
-//   };
-// }
-
 let lineItem;
 
 if (variantData) {
-  // ✅ ALWAYS use variant (even fallback first one)
+  // ✅ Always use real variant (match or first fallback)
   lineItem = {
     variantId: variantData.id,
     quantity: qty,
   };
 } else {
-  // ❌ only if product not found at all
+  // ❌ Only if product not found at all
   lineItem = {
     title: product ? product.slice(0, 40) : "Custom Product",
     quantity: qty,
-    originalUnitPrice: 100, // keep as number
+    originalUnitPrice: 100,
   };
 }
 
