@@ -246,26 +246,43 @@ export const action = async ({ request }) => {
 const variantId = await findVariantId(admin, product, variant);
 
 /** ---------------- PREPARE LINE ITEM ---------------- */
+// let lineItem;
+
+// if (variantId) {
+//   // ✅ Use real variant
+//   lineItem = {
+//     variantId: variantId,
+//     quantity: qty,
+//   };
+// } else {
+//   // ✅ Fallback (NO VARIANT)
+//   lineItem = {
+//     title: product ? product.slice(0, 40) : "Custom Product",
+//     quantity: qty,
+//     originalUnitPrice: "100",
+//     customAttributes: [
+//       {
+//         key: "Variant",
+//         value: variant || "N/A",
+//       },
+//     ],
+//   };
+// }
+
 let lineItem;
 
-if (variantId) {
-  // ✅ Use real variant
+if (variantData) {
+  // ✅ ALWAYS use variant (even fallback first one)
   lineItem = {
-    variantId: variantId,
+    variantId: variantData.id,
     quantity: qty,
   };
 } else {
-  // ✅ Fallback (NO VARIANT)
+  // ❌ only if product not found at all
   lineItem = {
     title: product ? product.slice(0, 40) : "Custom Product",
     quantity: qty,
-    originalUnitPrice: "100",
-    customAttributes: [
-      {
-        key: "Variant",
-        value: variant || "N/A",
-      },
-    ],
+    originalUnitPrice: 100, // keep as number
   };
 }
 
