@@ -263,9 +263,14 @@ if (variantData) {
     originalUnitPrice: 100,
   };
 }
- /** ---------------- TAG LOGIC ---------------- */
- let draftTags = ["draft_order"];
- if (rowTag) draftTags.push(rowTag);
+/** ---------------- TAG LOGIC ---------------- */
+const rowTag = body["Tag"]; // ✅ FIX
+
+let draftTags = ["draft_order"];
+
+if (rowTag && rowTag.trim() !== "") {
+  draftTags.push(rowTag.trim());
+}
 
 /** ---------------- CREATE DRAFT ORDER ---------------- */
 const draftRes = await admin.graphql(
@@ -287,11 +292,10 @@ const draftRes = await admin.graphql(
     variables: {
       input: {
         customerId,
-        tags: draftTags,
-    
-        lineItems: [lineItem], // ✅ keep as-is
-    
-        /** ✅ ADD THIS BLOCK */
+        tags: draftTags, // ✅ NOW WORKING
+
+        lineItems: [lineItem],
+
         shippingAddress: {
           firstName: firstName,
           lastName: lastName,
