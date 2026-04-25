@@ -263,6 +263,9 @@ if (variantData) {
     originalUnitPrice: 100,
   };
 }
+ /** ---------------- TAG LOGIC ---------------- */
+ let draftTags = ["draft_order"];
+ if (rowTag) draftTags.push(rowTag);
 
 /** ---------------- CREATE DRAFT ORDER ---------------- */
 const draftRes = await admin.graphql(
@@ -284,7 +287,7 @@ const draftRes = await admin.graphql(
     variables: {
       input: {
         customerId,
-        tags: ["draft_order"],
+        tags: draftTags,
     
         lineItems: [lineItem], // ✅ keep as-is
     
@@ -402,6 +405,7 @@ export default function CustomerTable() {
         "Product Name",
         "Variant Name",
         "Qty",
+        "Tag",
         "Status",
         "Checkout",
         "Action",
@@ -435,7 +439,7 @@ export default function CustomerTable() {
             background: "#fff",
           }}
         >
-          {Object.keys(item).slice(0, 15).map((k) => (
+          {Object.keys(item).slice(0, 16).map((k) => (
            <td
            key={k}
            style={{
